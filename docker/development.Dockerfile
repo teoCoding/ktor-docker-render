@@ -1,0 +1,32 @@
+# syntax = docker/dockerfile:1.2
+
+# Stage 1: Cache Gradle dependencies
+FROM gradle:latest AS cache
+RUN mkdir -p /home/gradle/cache_home
+ENV GRADLE_USER_HOME=/home/gradle/cache_home
+COPY build.gradle.* gradle.properties /home/gradle/app/
+COPY gradle /home/gradle/app/gradle
+WORKDIR /home/gradle/app
+RUN gradle clean build -i --stacktrace
+
+# Stage 2: Build Application
+FROM gradle:latest AS build
+COPY --from=cache /home/gradle/cache_home /home/gradle/.gradle
+COPY --chown=gradle:gradle . /home/gradle/src
+WORKDIR /home/gradle/src
+# Build the fat JAR, Gradle also supports shadow
+# and boot JAR by default.
+RUN gradle buildFatJar --no-daemon
+
+# Stage 3: Create the Runtime Image
+FROM amazoncorretto:22 AS runtime
+
+ENV MY_ENV_VARIABLE=MyDockerEnvironmentVariable
+
+RUN mkdir etc/secrets
+RUN --mount=type=secret,id=my_secret,dst=/my_secret cp /my_secret etc/secrets/my_secret
+
+EXPOSE 8080
+RUN mkdir /app
+COPY --from=build /home/gradle/src/build/libs/*.jar /app/my_ktor_app.jar
+ENTRYPOINT ["java","-jar","/app/my_ktor_app.jar"]
